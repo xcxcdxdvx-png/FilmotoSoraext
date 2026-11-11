@@ -12,7 +12,7 @@
   "quality": "1080p",
   "baseUrl": "https://filmo.to",
   "searchBaseUrl": "https://filmo.to/search?q=%s",
-  "scriptUrl": "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO/main/german/filmo-ger.js",
+  "scriptUrl": "https://raw.githubusercontent.com/xcxcdxdvx-png/FilmotoSoraext/refs/heads/main/filmo-ger.js",
   "asyncJS": true,
   "streamAsyncJS": false,
   "type": "movies"
