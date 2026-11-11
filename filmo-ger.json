@@ -1,0 +1,19 @@
+{
+  "sourceName": "Filmo (GER DUB)",
+  "iconUrl": "https://filmo.to/favicon-96x96.png",
+  "author": {
+    "name": "Filmo Addon",
+    "icon": "https://filmo.to/favicon-96x96.png",
+    "url": "https://filmo.to"
+  },
+  "version": "1.0.0",
+  "language": "German (DUB)",
+  "streamType": "HLS",
+  "quality": "1080p",
+  "baseUrl": "https://filmo.to",
+  "searchBaseUrl": "https://filmo.to/search?q=%s",
+  "scriptUrl": "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO/main/german/filmo-ger.js",
+  "asyncJS": true,
+  "streamAsyncJS": false,
+  "type": "movies"
+}
