@@ -140,57 +140,145 @@ function filmoLastPathPart(url) {
 // Search / details / episodes
 ///////////////////////////////////////////////////////////////////////////////////////////
 
-async function searchResults(keyword) {
-    try {
-        var query = encodeURIComponent(String(keyword || ''));
-        var response = await filmoRequest(FILMO_BASE + '/search?q=' + query, {
-            headers: { 'Referer': FILMO_BASE + '/', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' }
+function filmoLooksLikeHtml(value) {
+    var text = String(value == null ? '' : value).trim();
+    if (text.length < 80) return false;
+    return /^<\s*(?:!doctype|html|head|body|div|article|main|section)\b/i.test(text) ||
+        /<\/(?:html|body|article|div)>/i.test(text);
+}
+
+function filmoParseSearchHtml(html) {
+    var results = [];
+    var seen = {};
+
+    var cardRegex = /<article[^>]*class="[^"]*popular-spotlight-card[^"]*"[^>]*>([\s\S]*?)<\/article>/gi;
+    var cardMatch;
+    while ((cardMatch = cardRegex.exec(html)) !== null) {
+        var block = cardMatch[1];
+        var hrefMatch = /<a[^>]+href="([^"]+)"/i.exec(block);
+        if (!hrefMatch) continue;
+        var href = filmoAbsoluteUrl(hrefMatch[1], FILMO_BASE);
+        if (!href || !/\/movies\//i.test(href) || seen[href]) continue;
+
+        var imageMatch = /<img[^>]+src="([^"]+)"/i.exec(block);
+        var titleMatch = /class="[^"]*popular-spotlight-card__title[^"]*"[^>]*>([\s\S]*?)<\/h4>/i.exec(block);
+        if (!titleMatch) titleMatch = /<h4[^>]*>([\s\S]*?)<\/h4>/i.exec(block);
+
+        seen[href] = true;
+        results.push({
+            title: filmoCleanText(titleMatch ? titleMatch[1] : filmoLastPathPart(href).replace(/-/g, ' ')),
+            image: imageMatch ? filmoAbsoluteUrl(imageMatch[1], FILMO_BASE) : '',
+            href: href
         });
-        var html = response.text || '';
-        var results = [];
-        var seen = {};
+    }
 
-        var cardRegex = /<article[^>]*class="[^"]*popular-spotlight-card[^"]*"[^>]*>([\s\S]*?)<\/article>/gi;
-        var cardMatch;
-        while ((cardMatch = cardRegex.exec(html)) !== null) {
-            var block = cardMatch[1];
-            var hrefMatch = /<a[^>]+href="([^"]+)"/i.exec(block);
-            if (!hrefMatch) continue;
-            var href = filmoAbsoluteUrl(hrefMatch[1], FILMO_BASE);
-            if (!href || !/\/movies\//i.test(href) || seen[href]) continue;
-
-            var imageMatch = /<img[^>]+src="([^"]+)"/i.exec(block);
-            var titleMatch = /class="[^"]*popular-spotlight-card__title[^"]*"[^>]*>([\s\S]*?)<\/h4>/i.exec(block);
-            if (!titleMatch) titleMatch = /<h4[^>]*>([\s\S]*?)<\/h4>/i.exec(block);
-
-            seen[href] = true;
+    if (results.length === 0) {
+        var linkRegex = /<a[^>]+href="(https?:\/\/filmo\.to\/movies\/[^"]+)"[^>]*>([\s\S]{0,1200}?)<\/a>/gi;
+        var linkMatch;
+        while ((linkMatch = linkRegex.exec(html)) !== null) {
+            var link = filmoAbsoluteUrl(linkMatch[1], FILMO_BASE);
+            if (seen[link]) continue;
+            var inner = linkMatch[2];
+            var innerImg = /<img[^>]+src="([^"]+)"/i.exec(inner);
+            var innerTitle = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(inner);
+            seen[link] = true;
             results.push({
-                title: filmoCleanText(titleMatch ? titleMatch[1] : filmoLastPathPart(href).replace(/-/g, ' ')),
-                image: imageMatch ? filmoAbsoluteUrl(imageMatch[1], FILMO_BASE) : '',
-                href: href
+                title: filmoCleanText(innerTitle ? innerTitle[1] : filmoLastPathPart(link).replace(/-/g, ' ')),
+                image: innerImg ? filmoAbsoluteUrl(innerImg[1], FILMO_BASE) : '',
+                href: link
             });
         }
+    }
 
-        if (results.length === 0) {
-            var linkRegex = /<a[^>]+href="(https?:\/\/filmo\.to\/movies\/[^"]+)"[^>]*>([\s\S]{0,1200}?)<\/a>/gi;
-            var linkMatch;
-            while ((linkMatch = linkRegex.exec(html)) !== null) {
-                var link = filmoAbsoluteUrl(linkMatch[1], FILMO_BASE);
-                if (seen[link]) continue;
-                var inner = linkMatch[2];
-                var innerImg = /<img[^>]+src="([^"]+)"/i.exec(inner);
-                var innerTitle = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(inner);
-                seen[link] = true;
-                results.push({
-                    title: filmoCleanText(innerTitle ? innerTitle[1] : filmoLastPathPart(link).replace(/-/g, ' ')),
-                    image: innerImg ? filmoAbsoluteUrl(innerImg[1], FILMO_BASE) : '',
-                    href: link
-                });
-            }
+    return results;
+}
+
+async function filmoSearchApi(query) {
+    var response = await filmoRequest(FILMO_BASE + '/search/suggest?q=' + query, {
+        headers: {
+            'Referer': FILMO_BASE + '/',
+            'Accept': 'application/json, text/plain, */*',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    });
+    filmoLog('Search API status: ' + response.status + ', length: ' + String(response.text || '').length);
+
+    var data = filmoJson(response.text);
+    if (!data) return null;
+
+    var movies = data.movies || data.results || data.data;
+    if (!Array.isArray(movies)) return null;
+
+    var results = [];
+    var seen = {};
+    for (var i = 0; i < movies.length; i++) {
+        var movie = movies[i] || {};
+        var href = filmoAbsoluteUrl(movie.url || movie.href || movie.link || '', FILMO_BASE);
+        if (!href || !/\/movies\//i.test(href) || seen[href]) continue;
+        var image = movie.image || movie.poster || movie.poster_url || movie.thumbnail || '';
+        seen[href] = true;
+        results.push({
+            title: filmoCleanText(movie.title || movie.name || filmoLastPathPart(href).replace(/-/g, ' ')),
+            image: image ? filmoAbsoluteUrl(image, FILMO_BASE) : '',
+            href: href
+        });
+    }
+    return results;
+}
+
+async function searchResults(keyword) {
+    try {
+        var input = String(keyword == null ? '' : keyword);
+
+        // Some Sora modes pass the already-loaded search HTML instead of the keyword.
+        if (filmoLooksLikeHtml(input)) {
+            var inlineResults = filmoParseSearchHtml(input);
+            filmoLog('Search results (inline HTML): ' + inlineResults.length);
+            return JSON.stringify(inlineResults);
         }
 
-        filmoLog('Search results: ' + results.length);
-        return JSON.stringify(results);
+        var query = encodeURIComponent(input.trim());
+
+        // Start the regular search page early so API results can be enriched with posters.
+        var htmlPromise = filmoRequest(FILMO_BASE + '/search?q=' + query, {
+            headers: { 'Referer': FILMO_BASE + '/', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' }
+        });
+
+        // The site's own live-search endpoint is the most reliable source.
+        var apiResults = null;
+        try {
+            apiResults = await filmoSearchApi(query);
+        } catch (apiError) {
+            filmoLog('Search API error: ' + apiError);
+        }
+
+        var html = '';
+        try {
+            var htmlResponse = await htmlPromise;
+            html = htmlResponse.text || '';
+            filmoLog('Search HTML status: ' + htmlResponse.status + ', length: ' + html.length);
+        } catch (htmlError) {
+            filmoLog('Search HTML error: ' + htmlError);
+        }
+        var htmlResults = filmoParseSearchHtml(html);
+
+        if (apiResults && apiResults.length) {
+            // Fill in missing posters from the HTML search page.
+            var images = {};
+            for (var h = 0; h < htmlResults.length; h++) {
+                if (htmlResults[h].image) images[htmlResults[h].href] = htmlResults[h].image;
+            }
+            for (var a = 0; a < apiResults.length; a++) {
+                if (!apiResults[a].image && images[apiResults[a].href]) {
+                    apiResults[a].image = images[apiResults[a].href];
+                }
+            }
+            filmoLog('Search results (API): ' + apiResults.length);
+            return JSON.stringify(apiResults);
+        }
+
+        filmoLog('Search results (HTML): ' + htmlResults.length);
+        return JSON.stringify(htmlResults);
     } catch (error) {
         filmoLog('Search error: ' + error);
         return JSON.stringify([]);
